@@ -29,6 +29,9 @@ class UartInterface(AuxiliaryInterface):
         return len(data)
     
     def recv_all(self, timeout_s=10) -> bytearray:
+        """
+        Wait timeout_s seconds to collect any data sent through the interface.
+        """
         buf = bytearray(0)
         
         start_time = time.time()
@@ -38,9 +41,7 @@ class UartInterface(AuxiliaryInterface):
                 break
             if bool(self._ser.in_waiting):
                 byte = self._ser.read()
-                if byte != b'\n':
-                    buf += byte
-                else:
-                    break
+                buf += byte
+          
         print(f"UartInterface received {len(buf)} bytes")
         return buf
