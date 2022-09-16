@@ -19,6 +19,8 @@ from __future__ import division
 import time
 import socket
 from itertools import chain
+
+from tlslite.aux_interface import AuxiliaryInterface
 from .utils.compat import formatExceptionTrace
 from .tlsrecordlayer import TLSRecordLayer
 from .session import Session
@@ -61,9 +63,10 @@ class TLSConnection(TLSRecordLayer):
     framework like asyncore or Twisted which TLS Lite integrates with
     (see
     :py:class:`~.integration.tlsasyncdispatchermixin.TLSAsyncDispatcherMixIn`).
+    :param aux_interface: Auxiliary interface over which to send/recv bytes
     """
 
-    def __init__(self, sock):
+    def __init__(self, sock, aux_interface: AuxiliaryInterface):
         """Create a new TLSConnection instance.
 
         :param sock: The socket data will be transmitted on.  The
@@ -72,7 +75,7 @@ class TLSConnection(TLSRecordLayer):
 
         :type sock: socket.socket
         """
-        TLSRecordLayer.__init__(self, sock)
+        TLSRecordLayer.__init__(self, sock, aux_interface)
         self.serverSigAlg = None
         self.ecdhCurve = None
         self.dhGroupSize = None
@@ -887,7 +890,7 @@ class TLSConnection(TLSRecordLayer):
     def _clientGetServerHello(self, settings, session, clientHello):
         client_hello_hash = self._handshake_hash.copy()
         for result in self._getMsg(ContentType.handshake,
-                                   HandshakeType.server_hello):
+                                   HandshakeType.server_hello, use_aux=True):
             if result in (0,1): yield result
             else: break
 
@@ -2695,7 +2698,7 @@ class TLSConnection(TLSRecordLayer):
         if not self._ccs_sent and clientHello.session_id:
             ccs = ChangeCipherSpec().create()
             msgs.append(ccs)
-        for result in self._sendMsgs(msgs):
+        for result in self._sendMsgs(msgs, use_aux=True):
             yield result
 
         # Early secret
@@ -4260,7 +4263,6 @@ class TLSConnection(TLSRecordLayer):
         msgs.append(serverHello)
         msgs.append(serverKeyExchange)
         msgs.append(ServerHelloDone())
-        print(msgs)
         for result in self._sendMsgs(msgs):
             yield result
 

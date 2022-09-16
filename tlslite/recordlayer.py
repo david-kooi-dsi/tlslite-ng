@@ -325,11 +325,12 @@ class RecordLayer(object):
         accept, TLSRecordOverflow will be raised when records with larger
         plaintext size are received (in TLS 1.3 padding is included in this
         size but encrypted content type is not)
+    :param aux_interface: Auxiliary interface over which to send/recv bytes
     """
 
-    def __init__(self, sock):
+    def __init__(self, sock, aux_interface:AuxiliaryInterface):
         self.sock = sock
-        self._recordSocket = RecordSocket(sock)
+        self._recordSocket = RecordSocket(sock, aux_interface)
         self._version = (0, 0)
         self._tls13record = False
 
@@ -617,7 +618,7 @@ class RecordLayer(object):
 
         return data, padding
 
-    def sendRecord(self, msg):
+    def sendRecord(self, msg, use_aux=False):
         """
         Encrypt, MAC and send arbitrary message as-is through socket.
 
@@ -661,7 +662,7 @@ class RecordLayer(object):
 
         encryptedMessage = Message(contentType, data)
 
-        for result in self._recordSocket.send(encryptedMessage, padding):
+        for result in self._recordSocket.send(encryptedMessage, padding, use_aux=use_aux):
             yield result
 
     #
@@ -911,7 +912,7 @@ class RecordLayer(object):
 
         return data[:pos], value
 
-    def recvRecord(self):
+    def recvRecord(self, use_aux=False):
         """
         Read, decrypt and check integrity of a single record
 
@@ -925,7 +926,7 @@ class RecordLayer(object):
         """
         while True:
             result = None
-            for result in self._recordSocket.recv():
+            for result in self._recordSocket.recv(use_aux=use_aux):
                 if result in (0, 1):
                     yield result
                 else: break

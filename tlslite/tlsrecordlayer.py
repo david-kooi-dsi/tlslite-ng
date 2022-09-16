@@ -15,6 +15,8 @@ import io
 import time
 import socket
 
+from tlslite.aux_interface import AuxiliaryInterface
+
 from .utils.compat import *
 from .utils.cryptomath import *
 from .utils.codec import Parser, BadCertificateError
@@ -118,10 +120,10 @@ class TLSRecordLayer(object):
         response
     """
 
-    def __init__(self, sock):
+    def __init__(self, sock, aux_interface: AuxiliaryInterface):
         sock = BufferedSocket(sock)
         self.sock = sock
-        self._recordLayer = RecordLayer(sock)
+        self._recordLayer = RecordLayer(sock, aux_interface)
 
         #My session object (Session instance; read-only)
         self.session = None
@@ -898,18 +900,18 @@ class TLSRecordLayer(object):
         self._shutdown(False)
         raise TLSLocalAlert(alert, errorStr)
 
-    def _sendMsgs(self, msgs):
+    def _sendMsgs(self, msgs, use_aux=False):
         # send messages together in a single TCP write
         self.sock.buffer_writes = True
         randomizeFirstBlock = True
         for msg in msgs:
-            for result in self._sendMsg(msg, randomizeFirstBlock):
+            for result in self._sendMsg(msg, randomizeFirstBlock, use_aux=use_aux):
                 yield result
             randomizeFirstBlock = True
         self.sock.flush()
         self.sock.buffer_writes = False
 
-    def _sendMsg(self, msg, randomizeFirstBlock=True, update_hashes=True):
+    def _sendMsg(self, msg, randomizeFirstBlock=True, update_hashes=True, use_aux=False):
         """Fragment and send message through socket"""
         #Whenever we're connected and asked to send an app data message,
         #we first send the first byte of the message.  This prevents
@@ -919,7 +921,7 @@ class TLSRecordLayer(object):
                 and self._recordLayer.isCBCMode() \
                 and msg.contentType == ContentType.application_data:
             msgFirstByte = msg.splitFirstByte()
-            for result in self._sendMsgThroughSocket(msgFirstByte):
+            for result in self._sendMsgThroughSocket(msgFirstByte, use_aux=use_aux):
                 yield result
             if len(msg.write()) == 0:
                 return
@@ -936,11 +938,11 @@ class TLSRecordLayer(object):
             buf = buf[self.recordSize:]
 
             msgFragment = Message(contentType, newB)
-            for result in self._sendMsgThroughSocket(msgFragment):
+            for result in self._sendMsgThroughSocket(msgFragment, use_aux=use_aux):
                 yield result
 
         msgFragment = Message(contentType, buf)
-        for result in self._sendMsgThroughSocket(msgFragment):
+        for result in self._sendMsgThroughSocket(msgFragment, use_aux=use_aux):
             yield result
 
     def _queue_message(self, msg):
@@ -964,11 +966,11 @@ class TLSRecordLayer(object):
         self._buffer_content_type = None
         self._buffer = bytearray()
 
-    def _sendMsgThroughSocket(self, msg):
+    def _sendMsgThroughSocket(self, msg, use_aux=False):
         """Send message, handle errors"""
 
         try:
-            for result in self._recordLayer.sendRecord(msg):
+            for result in self._recordLayer.sendRecord(msg, use_aux=False):
                 if result in (0, 1):
                     yield result
         except socket.error:
@@ -1006,7 +1008,7 @@ class TLSRecordLayer(object):
                 # raise the socket.error
                 raise
 
-    def _getMsg(self, expectedType, secondaryType=None, constructorType=None):
+    def _getMsg(self, expectedType, secondaryType=None, constructorType=None, use_aux=True):
         try:
             if not isinstance(expectedType, tuple):
                 expectedType = (expectedType,)
@@ -1017,7 +1019,7 @@ class TLSRecordLayer(object):
             #    then try again
             #  - we receive an empty application-data fragment; we try again
             while 1:
-                for result in self._getNextRecord():
+                for result in self._getNextRecord(use_aux):
                     if result in (0,1):
                         yield result
                     else:
@@ -1234,7 +1236,7 @@ class TLSRecordLayer(object):
                 yield result
 
     #Returns next record or next handshake message
-    def _getNextRecord(self):
+    def _getNextRecord(self, use_aux):
         """read next message from socket, defragment message"""
 
         while True:
@@ -1260,7 +1262,7 @@ class TLSRecordLayer(object):
             early_data_ok = self._recordLayer.early_data_ok
 
             # when the message buffer is empty, read next record from socket
-            for result in self._getNextRecordFromSocket():
+            for result in self._getNextRecordFromSocket(use_aux):
                 if result in (0, 1):
                     yield result
                 else:
@@ -1289,12 +1291,12 @@ class TLSRecordLayer(object):
                 # other types need to be put into buffers
                 self._defragmenter.add_data(header.type, parser.bytes)
 
-    def _getNextRecordFromSocket(self):
+    def _getNextRecordFromSocket(self, use_aux=True):
         """Read a record, handle errors"""
 
         try:
             # otherwise... read the next record
-            for result in self._recordLayer.recvRecord():
+            for result in self._recordLayer.recvRecord(use_aux):
                 if result in (0, 1):
                     yield result
                 else:
