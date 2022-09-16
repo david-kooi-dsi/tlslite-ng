@@ -9,6 +9,7 @@
 """TLS Lite + httplib."""
 
 import socket
+from tlslite.aux_interface import UartInterface
 try:
     import httplib
 except ImportError:
@@ -115,6 +116,6 @@ class HTTPTLSConnection(httplib.HTTPConnection, ClientHelper):
 
     def connect(self):
         httplib.HTTPConnection.connect(self)
-        self.sock = TLSConnection(self.sock)
+        self.sock = TLSConnection(self.sock, UartInterface())
         self.sock.ignoreAbruptClose = self.ignoreAbruptClose
         ClientHelper._handshake(self, self.sock)
