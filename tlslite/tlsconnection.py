@@ -4260,6 +4260,7 @@ class TLSConnection(TLSRecordLayer):
         msgs.append(serverHello)
         msgs.append(serverKeyExchange)
         msgs.append(ServerHelloDone())
+        print(msgs)
         for result in self._sendMsgs(msgs):
             yield result
 

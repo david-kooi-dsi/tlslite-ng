@@ -54,6 +54,16 @@ class TLSAbruptCloseError(TLSError):
     pass
 
 
+class AuxInterfaceBufferEmpty(TLSError):
+    """"
+    The auxiliary buffer does not contain enough
+    bytes to fulfil the recieve request.     
+    """
+    def __str__(self):
+        """At least print out the Exception time for str(...)."""
+        return repr(self)
+
+
 class TLSAlert(TLSError):
     """A TLS alert has been signalled."""
 

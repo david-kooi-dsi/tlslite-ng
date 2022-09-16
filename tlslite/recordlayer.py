@@ -7,6 +7,8 @@
 import socket
 import errno
 import copy
+
+from tlslite.aux_interface import AuxiliaryInterface
 try:
     # in python 3 the native zip() returns iterator
     from itertools import izip
@@ -27,10 +29,12 @@ from .utils.codec import Parser, Writer
 from .utils.compat import compatHMAC
 from .utils.cryptomath import getRandomBytes, MD5, HKDF_expand_label
 from .utils.constanttime import ct_compare_digest, ct_check_cbc_mac_and_pad
-from .errors import TLSRecordOverflow, TLSIllegalParameterException,\
+from .errors import AuxInterfaceBufferEmpty, TLSRecordOverflow, TLSIllegalParameterException,\
         TLSAbruptCloseError, TLSDecryptionFailed, TLSBadRecordMAC, \
         TLSUnexpectedMessage
 from .mathtls import createMAC_SSL, createHMAC, calc_key
+
+
 
 class RecordSocket(object):
     """
@@ -44,18 +48,21 @@ class RecordSocket(object):
         size
     """
 
-    def __init__(self, sock):
+    def __init__(self, sock, aux_interface:AuxiliaryInterface=None):
         """
         Assign socket to wrapper
 
         :type sock: socket.socket
+        :param aux_interface: Auxiliary interface over which to send/recv bytes
         """
         self.sock = sock
         self.version = (0, 0)
         self.tls13record = False
         self.recv_record_limit = 2**14
+        self.aux_interface = aux_interface
+        self.aux_recv_buf = bytearray(0)
 
-    def _sockSendAll(self, data):
+    def _sockSendAll(self, data, use_aux=False):
         """
         Send all data through socket
 
@@ -64,12 +71,20 @@ class RecordSocket(object):
         :raises socket.error: when write to socket failed
         """
         while 1:
+            # Traditional send
+            if not use_aux:
+                try:
+                    bytesSent = self.sock.send(data)
+                except socket.error as why:
+                    if why.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
+                        yield 1
+                        continue
+                    raise
+
+            # Auxiliary send
             try:
-                bytesSent = self.sock.send(data)
-            except socket.error as why:
-                if why.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
-                    yield 1
-                    continue
+                bytesSent = self.aux_interface.send(data)
+            except:
                 raise
 
             if bytesSent == len(data):
@@ -77,7 +92,7 @@ class RecordSocket(object):
             data = data[bytesSent:]
             yield 1
 
-    def send(self, msg, padding=0):
+    def send(self, msg, padding=0, use_aux=False):
         """
         Send the message through socket.
 
@@ -99,10 +114,10 @@ class RecordSocket(object):
 
         data = header.write() + data
 
-        for result in self._sockSendAll(data):
+        for result in self._sockSendAll(data, use_aux):
             yield result
 
-    def _sockRecvAll(self, length):
+    def _sockRecvAll(self, length, use_aux=False):
         """
         Read exactly the amount of bytes specified in L{length} from raw socket.
 
@@ -117,31 +132,42 @@ class RecordSocket(object):
             yield buf
 
         while True:
-            try:
-                socketBytes = self.sock.recv(length - len(buf))
-            except socket.error as why:
-                if why.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
-                    yield 0
-                    continue
-                else:
-                    raise
+            # Traditional recv
+            if not use_aux:
+                try:
+                    socketBytes = self.sock.recv(length - len(buf))
+                except socket.error as why:
+                    if why.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
+                        yield 0
+                        continue
+                    else:
+                        raise
 
-            #if the connection closed, raise socket error
-            if len(socketBytes) == 0:
-                raise TLSAbruptCloseError()
+                #if the connection closed, raise socket error
+                if len(socketBytes) == 0:
+                    raise TLSAbruptCloseError()
+            # Auxiliary recv
+            else:
+                if len(self.aux_recv_buf) < length:
+                    raise AuxInterfaceBufferEmpty()
+                try:
+                    socketBytes = self.aux_recv_buf[0:length]
+                    self.aux_recv_buf = self.aux_recv_buf[length:]
+                except IndexError:
+                    raise AuxInterfaceBufferEmpty()
 
             buf += bytearray(socketBytes)
             if len(buf) == length:
                 yield buf
 
-    def _recvHeader(self):
+    def _recvHeader(self, use_aux=False):
         """Read a single record header from socket"""
         #Read the next record header
         buf = bytearray(0)
         ssl2 = False
 
         result = None
-        for result in self._sockRecvAll(1):
+        for result in self._sockRecvAll(1, use_aux):
             if result in (0, 1):
                 yield result
             else: break
@@ -153,7 +179,7 @@ class RecordSocket(object):
             ssl2 = False
             # SSLv3 record layer header is 5 bytes long, we already read 1
             result = None
-            for result in self._sockRecvAll(4):
+            for result in self._sockRecvAll(4, use_aux):
                 if result in (0, 1):
                     yield result
                 else: break
@@ -168,7 +194,7 @@ class RecordSocket(object):
             else:
                 readLen = 2
             result = None
-            for result in self._sockRecvAll(readLen):
+            for result in self._sockRecvAll(readLen, use_aux):
                 if result in (0, 1):
                     yield result
                 else: break
@@ -190,7 +216,7 @@ class RecordSocket(object):
 
         yield record
 
-    def recv(self):
+    def recv(self, use_aux=False):
         """
         Read a single record from socket, handle SSLv2 and SSLv3 record layer
 
@@ -206,8 +232,17 @@ class RecordSocket(object):
         :raises TLSIllegalParameterException: When the record header was
             malformed
         """
+
+        # Initialize the auxiliary recv buf and
+        # collect all the data the auxiliary interface will 
+        # send us. aux_recv_buf will be used to get the header, data
+        # instead of a traditional socket. 
+        if use_aux:
+            self.aux_recv_buf = bytearray(0)
+            self.aux_recv_buf += self.aux_interface.recv_all()
+
         record = None
-        for record in self._recvHeader():
+        for record in self._recvHeader(use_aux):
             if record in (0, 1):
                 yield record
             else: break
@@ -225,7 +260,7 @@ class RecordSocket(object):
         buf = bytearray(0)
 
         result = None
-        for result in self._sockRecvAll(record.length):
+        for result in self._sockRecvAll(record.length, use_aux):
             if result in (0, 1):
                 yield result
             else: break
