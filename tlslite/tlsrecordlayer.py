@@ -122,6 +122,7 @@ class TLSRecordLayer(object):
 
     def __init__(self, sock):
         enc_sock = EncryptedSocket.copy(sock)
+        enc_sock.enable_encryption()
         enc_buf_sock = BufferedSocket(enc_sock)
         self.sock = enc_buf_sock
         self._recordLayer = RecordLayer(enc_buf_sock)
