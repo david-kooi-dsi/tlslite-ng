@@ -30,6 +30,8 @@ from .bufferedsocket import BufferedSocket
 from .handshakesettings import HandshakeSettings
 from .keyexchange import KeyExchange
 
+from acoustic_tls.encrypted_socket import EncryptedSocket
+
 class TLSRecordLayer(object):
     """
     This class handles data transmission for a TLS connection.
@@ -119,9 +121,10 @@ class TLSRecordLayer(object):
     """
 
     def __init__(self, sock):
-        sock = BufferedSocket(sock)
-        self.sock = sock
-        self._recordLayer = RecordLayer(sock)
+        enc_sock = EncryptedSocket.copy(sock)
+        enc_buf_sock = BufferedSocket(enc_sock)
+        self.sock = enc_buf_sock
+        self._recordLayer = RecordLayer(enc_buf_sock)
 
         #My session object (Session instance; read-only)
         self.session = None
