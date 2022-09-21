@@ -15,6 +15,8 @@ import io
 import time
 import socket
 
+
+
 from .utils.compat import *
 from .utils.cryptomath import *
 from .utils.codec import Parser, BadCertificateError
@@ -30,6 +32,7 @@ from .bufferedsocket import BufferedSocket
 from .handshakesettings import HandshakeSettings
 from .keyexchange import KeyExchange
 
+from acoustic_tls import config 
 from acoustic_tls.encrypted_socket import EncryptedSocket
 
 class TLSRecordLayer(object):
@@ -122,7 +125,7 @@ class TLSRecordLayer(object):
 
     def __init__(self, sock):
         enc_sock = EncryptedSocket.copy(sock)
-        enc_sock.enable_encryption()
+        enc_sock.enable_encryption(filepath=config.acoustic_key_filepath)
         enc_buf_sock = BufferedSocket(enc_sock)
         self.sock = enc_buf_sock
         self._recordLayer = RecordLayer(enc_buf_sock)
